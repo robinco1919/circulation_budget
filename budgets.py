@@ -5,9 +5,10 @@ import xarray as xr
 import pandas as pd
 from calc import g, R_e, R_d, absolute_vorticity 
 
-#---------------------
-# term calculations
-#---------------------
+#----------------------------
+# budget term calculations
+#----------------------------
+
 # note these are budget terms and require transport of a quntity phi
 
 def flux_divergence(u, v, phi):
@@ -83,10 +84,11 @@ def boundary_flux(phi_x, phi_y, column_integrate=False):
 
     box_area = R_e**2 * np.deg2rad(max_lon - min_lon) * (np.sin(np.deg2rad(max_lat)) - np.sin(np.deg2rad(min_lat)))#get_box_area(phi)
 
-    flux_south = ((phi_y.sel(latitude=min_lat).integrate('longitude') * dx_south)) / box_area
-    flux_east  = ((phi_x.sel(longitude=max_lon).integrate('latitude') * dy)) / box_area
-    flux_north = -((phi_y.sel(latitude=max_lat).integrate('longitude') * dx_north)) / box_area
-    flux_west  = -((phi_x.sel(longitude=min_lon).integrate('latitude') * dy)) / box_area
+    # note the east/west fluxes have an extra -ve sign since ERA5 data has latitude ordered from 90 to -90 (reverse)
+    flux_south = ((phi_y.sel(latitude=min_lat).integrate('longitude') * dx_south)) / box_area # n = (0, 1)
+    flux_east  = ((phi_x.sel(longitude=max_lon).integrate('latitude') * dy)) / box_area # n = (-1, 0)
+    flux_north = -((phi_y.sel(latitude=max_lat).integrate('longitude') * dx_north)) / box_area # n = (0, -1)
+    flux_west  = -((phi_x.sel(longitude=min_lon).integrate('latitude') * dy)) / box_area # n = (1, 0)
     
     total_flux = flux_south + flux_east + flux_north + flux_west
 
@@ -109,6 +111,7 @@ def tilting(u, v, w, rv):
     lats_rad = np.deg2rad(u.latitude) # in radians
     coslat = np.cos(lats_rad)
 
+    # add coordinates to the data in radians 
     u = add_rad_coords(u)
     v = add_rad_coords(v)
     w = add_rad_coords(w)
@@ -116,15 +119,16 @@ def tilting(u, v, w, rv):
     
     dw_dy = w.differentiate('latrad') / R_e
     dv_dp = v.differentiate('level') / 100 # data in hPa, convert to Pa
-    rv_x = dw_dy - dv_dp
+    rv_x = dw_dy - dv_dp # x component of relative vorticity
     
     dw_dx = w.differentiate('lonrad') / (R_e * coslat)
     du_dp = u.differentiate('level') / 100
-    rv_y = du_dp - dw_dx
+    rv_y = du_dp - dw_dx # y component of relative vorticity
     
     tilt_x = -w * rv_x
     tilt_y = -w * rv_y
-
+    
+    # flux divergence of the above tilting vector
     return 1/(R_e * coslat) * ((tilt_y * coslat).differentiate('latrad') + tilt_x.differentiate('lonrad'))
 
 def tilting_comps(u, v, w, rv):
@@ -132,7 +136,6 @@ def tilting_comps(u, v, w, rv):
     For relative vorticity/circulation budget only
     COMPONENTS, not the budget term
     """
-    # THIS NEEDS TO BE DONE IN SPHERICAL COORDS (not sure how?)
 
     lats_rad = np.deg2rad(u.latitude) # in radians
     coslat = np.cos(lats_rad)
@@ -163,6 +166,7 @@ def friction(u_param, v_param):
     u_param = add_rad_coords(u_param)
     v_param = add_rad_coords(v_param)
 
+    # take the curl of the friction for the budget 
     F_fri_x = -v_param
     F_fri_y = u_param
 
@@ -176,6 +180,9 @@ def friction(u_param, v_param):
 
 
 def circulation_budget(u, v, w, rv, calc_fric=False, u_param=None, v_param=None, column_integrate=False, area_mean = True):
+    """
+    Main circulation budget function
+    """
 
     av = absolute_vorticity(rv)
     
@@ -233,23 +240,6 @@ def circulation_budget_layer(u, v, w, rv, min_level, max_level, area_mean=True):
     rv = rv.sel(level=slice(min_level, max_level))
 
     return circulation_budget(u, v, w, rv, column_integrate=True, area_mean=area_mean)
-
-
-# def circulation_budget_friction(u, v, w, rv, u_param, v_param, area_mean = True, column_integrate=False):
-
-#     dav_dt, flux_div, div, adv, tilt, res = circulation_budget(u, v, w, rv, column_integrate=column_integrate, area_mean = area_mean)
-
-#     fric = friction(u_param, v_param)
-#     res_fric = res + fric
-
-#     if column_integrate:
-#         fric = fric.integrate('level') / g * 100
-#         res_fric = res_fric.integrate('level') / g * 100
-#     if area_mean:
-#         fric = spherical_area_mean(fric)
-#         res_fric = spherical_area_mean(res_fric)
-
-#     return dav_dt, flux_div, div, adv, tilt, res, fric, res_fric
 
 
 def absolute_vorticity_flux(u, v, w, rv, fric=False, u_tend=None, v_tend=None):
@@ -374,7 +364,7 @@ def moving_average(data, n=24):
 
 def spherical_area_mean(data):
     """
-    version without trimming (trim before entering!)
+    takes the mean over a box while accounting for spherical geometry (scale by cos latitude)
     """
     coslat = np.cos(np.deg2rad(data.latitude))
     data_mean = data * coslat
