@@ -3,13 +3,28 @@
 import numpy as np
 import xarray as xr
 import pandas as pd
-from calc import g, R_e, R_d, absolute_vorticity 
+
+#----------------------------
+# constants
+#----------------------------
+
+g = 9.81                       # gravitational acceleration
+R_e = 6371e3                   # radius of earth
 
 #----------------------------
 # budget term calculations
 #----------------------------
 
-# note these are budget terms and require transport of a quntity phi
+def absolute_vorticity(rv):
+    """
+    Converts relative vorticity to absolute vorticity (adds f)
+    """
+    lats = np.deg2rad(rv.latitude) # in radians
+    f = 2 * (2*np.pi)/(60*60*24) * np.sin(lats)
+    av = rv.copy() + f.copy() # copy just to make sure rv and f aren't changed
+    return av
+
+# note these are budget terms and require transport of a quantity phi
 
 def flux_divergence(u, v, phi):
 
@@ -40,15 +55,6 @@ def advection(u, v, phi):
     adv = u * phi.differentiate('longitude')/dx + v * phi.differentiate('latitude')/dy
     
     return adv
-
-
-def vertical_advection(w, phi):
-
-    vert_flux_div = (w * phi).differentiate('level') / 100
-    vert_div = phi * w.differentiate('level') / 100
-    vert_adv = w * phi.differentiate('level') / 100
-
-    return vert_flux_div, vert_div, vert_adv
 
 
 def advection_lineint(u, v, phi, column_integrate=False):
@@ -106,7 +112,6 @@ def tilting(u, v, w, rv):
     """
     For relative vorticity/circulation budget only
     """
-    # THIS NEEDS TO BE DONE IN SPHERICAL COORDS (not sure how?)
 
     lats_rad = np.deg2rad(u.latitude) # in radians
     coslat = np.cos(lats_rad)
@@ -131,9 +136,9 @@ def tilting(u, v, w, rv):
     # flux divergence of the above tilting vector
     return 1/(R_e * coslat) * ((tilt_y * coslat).differentiate('latrad') + tilt_x.differentiate('lonrad'))
 
+    
 def tilting_comps(u, v, w, rv):
     """
-    For relative vorticity/circulation budget only
     COMPONENTS, not the budget term
     """
 
@@ -157,6 +162,7 @@ def tilting_comps(u, v, w, rv):
     tilt_y = -w * rv_y
 
     return tilt_x, tilt_y
+
 
 def friction(u_param, v_param):
 
@@ -230,7 +236,7 @@ def circulation_budget(u, v, w, rv, calc_fric=False, u_param=None, v_param=None,
 
 def circulation_budget_layer(u, v, w, rv, min_level, max_level, area_mean=True):
     """
-    calculate a mass-weightyed circulation budget
+    calculate a mass-weighted circulation budget
     basically just an auxilliary function which cuts the relevant levels and passes to main function
     """
 
@@ -245,7 +251,6 @@ def circulation_budget_layer(u, v, w, rv, min_level, max_level, area_mean=True):
 def absolute_vorticity_flux(u, v, w, rv, calc_fric=False, u_param=None, v_param=None):
     """
     The calculates "Z" in the circulation budget.
-    Note it's not just a horizontal flux
     """
 
     av = absolute_vorticity(rv)
@@ -263,74 +268,10 @@ def absolute_vorticity_flux(u, v, w, rv, calc_fric=False, u_param=None, v_param=
         fric_x = 0
         fric_y = 0
 
-    flux_x = adv_x + tilt_x + fric_x
-    flux_y = adv_y + tilt_y + fric_y
+    Z_x = adv_x + tilt_x + fric_x
+    Z_y = adv_y + tilt_y + fric_y
 
-    return flux_x, flux_y, adv_x, adv_y, tilt_x, tilt_y, fric_x, fric_y
-
-#---------------------
-# Moisture budget
-#---------------------
-
-def moisture_budget(u, v, w, q, E, P, column_integrate=False, area_mean=True):
-    """
-    Budget for a single level. Note convergence & vertical advection cancel out.
-    """
-
-    dq_dt = q.differentiate('time', datetime_unit = 's')
-    flux_div = flux_divergence(u, v, q)
-    div = divergence(u, v, q)
-    adv = advection(u, v, q)
-    vert_flux_div, vert_div, vert_adv = vertical_advection(w, q)
-    E_mean = E
-    P_mean = P
-
-    if column_integrate:
-        dq_dt = dq_dt.integrate('level') / g * 100 # could use tcwv I guess
-        flux_div = flux_div.integrate('level') / g * 100
-        div = div.integrate('level') / g * 100
-        adv = adv.integrate('level') / g * 100
-        vert_flux_div = vert_flux_div.integrate('level') / g * 100
-        vert_div = vert_div.integrate('level') / g * 100
-        vert_adv = vert_adv.integrate('level') / g * 100
-
-    if area_mean:
-        dq_dt = spherical_area_mean(dq_dt)
-        flux_div = spherical_area_mean(flux_div)
-        div = spherical_area_mean(div)
-        adv = spherical_area_mean(adv)
-        vert_flux_div = spherical_area_mean(vert_flux_div)
-        vert_div = spherical_area_mean(vert_div)
-        vert_adv = spherical_area_mean(vert_adv)
-        E_mean = spherical_area_mean(E)
-        P_mean = spherical_area_mean(P)
-
-
-    return dq_dt, flux_div, div, adv, vert_flux_div, vert_div, vert_adv, E_mean, P_mean
-
-
-def moisture_budget_layer(u, v, w, q, E, P, min_level, max_level, area_mean = True):
-
-    """
-    calculates budget in a layer
-    Same as regular budget, but need to do vertical fluxes into/out of layer too.
-    """
-
-    u = u.sel(level=slice(min_level, max_level))
-    v = v.sel(level=slice(min_level, max_level))
-    w = w.sel(level=slice(min_level, max_level))
-    q = q.sel(level=slice(min_level, max_level))
-
-    dq_dt, flux_div, div, adv, _, _, _, E_mean, P_mean = moisture_budget(u, v, w, q, E, P, column_integrate=True)
-
-    v_flux = w * q
-    net_vert_adv = (v_flux.sel(level=max_level) - v_flux.sel(level=min_level)) / g
-
-    if area_mean:
-        net_vert_adv = spherical_area_mean(net_vert_adv)
-        
-    return dq_dt, flux_div, div, adv, net_vert_adv, E_mean, P_mean
-
+    return Z_x, Z_y, adv_x, adv_y, tilt_x, tilt_y, fric_x, fric_y
 
 #------------------------
 # Supporting functions
@@ -343,16 +284,6 @@ def add_rad_coords(data):
     data = data.assign_coords(lonrad = ('longitude', np.deg2rad(data.longitude.values)))
     data = data.assign_coords(latrad = ('latitude', np.deg2rad(data.latitude.values)))
     return data
-
-
-# def spherical_winds(u, v):
-#     """
-#     Converts u=dx/dt, v=dy/dt to spherical counterparts u_lon = dlambda/dt, u_lat = dphi/dt
-#     """
-#     coslat = np.cos(np.deg2rad(u.latitude))
-#     u_lon = 1/(R_e*coslat) * u
-#     u_lat = 1/(R_e) * v
-#     return u_lon, u_lat
 
     
 def moving_average(data, n=24):
