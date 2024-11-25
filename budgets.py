@@ -242,7 +242,7 @@ def circulation_budget_layer(u, v, w, rv, min_level, max_level, area_mean=True):
     return circulation_budget(u, v, w, rv, column_integrate=True, area_mean=area_mean)
 
 
-def absolute_vorticity_flux(u, v, w, rv, fric=False, u_tend=None, v_tend=None):
+def absolute_vorticity_flux(u, v, w, rv, calc_fric=False, u_param=None, v_param=None):
     """
     The calculates "Z" in the circulation budget.
     Note it's not just a horizontal flux
@@ -255,10 +255,10 @@ def absolute_vorticity_flux(u, v, w, rv, fric=False, u_tend=None, v_tend=None):
     tilt_x, tilt_y = tilting_comps(u, v, w, rv)
 
     # parameterised friction
-    if fric:
+    if calc_fric:
         # friction part of Z is the cross product of the param terms
-        fric_x = -v_tend
-        fric_y = u_tend
+        fric_x = -v_param
+        fric_y = u_param
     else:
         fric_x = 0
         fric_y = 0
